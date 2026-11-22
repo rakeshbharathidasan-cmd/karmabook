@@ -353,6 +353,30 @@ body.peek .scrim{background:transparent!important;backdrop-filter:none!important
 .anyc{display:inline-flex;align-items:center;gap:4px;font-size:18px}.anyc input{width:34px;height:30px;padding:1px;border-radius:8px}
 .crw{display:grid;grid-template-columns:42px minmax(0,1fr) 38px 30px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
 .crw input[type=color]{width:38px;height:38px;padding:2px;border-radius:10px}.crw .x{color:var(--dn);font-weight:900}
+
+/* ===== v1.1 · header fit + smoother on phones ===== */
+header{gap:6px}
+.brand{flex:1 1 auto;min-width:0;gap:8px}
+.brand>div:last-child{min-width:0}
+.brand b{font-size:17px;letter-spacing:.6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand small{font-size:10.5px;overflow:hidden;text-overflow:ellipsis}
+.mark{width:34px;height:34px;border-radius:11px}.mark::after{display:none}
+.hb{gap:5px;flex:none}
+.icon-btn{width:35px;height:35px;border-radius:11px}
+.icon-btn svg{width:18px;height:18px}
+@media(max-width:370px){.brand b{font-size:15px;letter-spacing:.3px}.icon-btn{width:32px;height:32px}.hb{gap:4px}}
+/* lighter compositing: no live blur, no animated shadows */
+.scrim{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:rgba(3,2,12,.72)}
+nav{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:color-mix(in srgb,var(--bg) 97%,transparent)}
+.fab{animation:none;box-shadow:0 0 0 5px var(--bg),0 10px 30px -6px var(--vio);position:relative}
+.fab::before{content:"";position:absolute;inset:-6px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--vio) 70%,transparent),transparent 70%);z-index:-1;animation:fabo 3s ease-in-out infinite;pointer-events:none}
+@keyframes fabo{50%{opacity:.35;transform:scale(1.15)}}
+.pt{box-shadow:none;will-change:transform}
+body::before{will-change:transform}
+/* pause the background motion while a panel is open so the panel itself stays smooth */
+body.open::before,body.open .son,body.open .fab::before,body.open .lorb{animation-play-state:paused}
+body.open #view,body.open nav{pointer-events:none}
+.pt,.feed,.hist,.tl{-webkit-touch-callout:none}
 </style>
 <style id="lookCss"></style><style id="btnCss"></style>
 </head>
@@ -396,7 +420,8 @@ let S;
 try { const d = JSON.parse(localStorage.getItem(KEY) || 'null'); S = d && Array.isArray(d.people) ? {...fresh(), ...d, settings:{...fresh().settings, ...(d.settings || {})}} : fresh(); } catch(e) { S = fresh(); }
 let L = {method:null, hash:null, salt:null, cred:null, grace:0}; try { L = {...L, ...(JSON.parse(localStorage.getItem(LKEY) || '{}'))}; } catch(e) {}
 let warned = false;
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) { if (!warned) { warned = true; toast('Could not save on this device'); } } };
+const SC = new Map();
+const save = () => { SC.clear(); try { localStorage.setItem(KEY, JSON.stringify(S)); } catch(e) { if (!warned) { warned = true; toast('Could not save on this device'); } } };
 const saveL = () => { try { localStorage.setItem(LKEY, JSON.stringify(L)); } catch(e) {} };
 const UI = {tab:'people', cat:'all', person:null, pf:'all', range:90, tlf:'all'};
 
@@ -423,13 +448,18 @@ const sgnV = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v);
 
 /* ===================== trust score ===================== */
 // 50 = neutral. Each deed pushes by its rating (−3…+3); weight halves every 180 days, so people can change.
-function score(id, at = Date.now()){
+function score(id, at){
+  const exact = at != null; at = at ?? Math.floor(Date.now() / 60000) * 60000;
+  const ck = id + '|' + at; if (SC.has(ck)) return SC.get(ck);
+  const v = scoreRaw(id, at); SC.set(ck, v); return v;
+}
+function scoreRaw(id, at){
   const ds = S.deeds.filter(d => d.p === id && d.t <= at); if (!ds.length) return null;
   const raw = ds.reduce((s, d) => s + d.v * Math.pow(.5, (at - d.t) / (HALF * DAY)), 0);
   return Math.round(50 + 50 * Math.tanh(raw / 6));
 }
 const tier = s => s == null ? ['No record','#646a9e'] : (TIERS.find(t => s >= t[0]) || TIERS[3]).slice(1);
-const trend = (id, days = 30) => { const a = score(id), b = score(id, Date.now() - days * DAY); return a != null && b != null ? a - b : null; };
+const trend = (id, days = 30) => { const a = score(id), b = score(id, Math.floor(Date.now() / 60000) * 60000 - days * DAY); return a != null && b != null ? a - b : null; };
 function circle(list = S.people){ const sc = list.map(p => score(p.id)).filter(x => x != null); return sc.length ? Math.round(avg(sc)) : null; }
 
 /* ===================== lock: fingerprint (step 1) + PIN or pattern (step 2) ===================== */
@@ -529,7 +559,7 @@ function ringSVG(val, size, stroke, col, id){
   const r = (size - stroke) / 2 - 4, C = 2 * Math.PI * r, f = val == null ? 0 : val / 100;
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${col || '#2ec5ff'}"/><stop offset="1" stop-color="${col ? col : '#ff4fa3'}" stop-opacity="${col ? .75 : 1}"/></linearGradient></defs>
     <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--s3)" stroke-width="${stroke}"/>
-    <circle class="rarc" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${col ? col : `url(#${id})`}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${Math.max(.01, f * C).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 ${size / 2} ${size / 2})" style="filter:drop-shadow(0 0 6px ${col || '#7c5cff'})"/></svg>`;
+    <circle class="rarc" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${col ? col : `url(#${id})`}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${Math.max(.01, f * C).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 ${size / 2} ${size / 2})"${size >= 90 ? ` style="filter:drop-shadow(0 0 6px ${col || '#7c5cff'})"` : ''}/></svg>`;
 }
 
 /* ---------- PEOPLE (home) ---------- */
